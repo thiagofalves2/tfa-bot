@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Node.js Cloudant Sample
 
 This application demonstrates how to use the Bluemix Cloudant NoSQL DB service.  It helps users organize their favorite files. The UI talks to a RESTful Express CRUD backend API.
@@ -15,6 +14,3 @@ This application demonstrates how to use the Bluemix Cloudant NoSQL DB service. 
 + Access the running app in a browser at <http://localhost:3000>
 
 [Install Node.js]: https://nodejs.org/en/download/
-=======
-# facebook-chatbot
->>>>>>> ca09c62a69501de96b636eea1b7d3500996416cc
