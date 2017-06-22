@@ -1,0 +1,25 @@
+{
+    "cloudantNoSQLDB": [
+        {
+            "credentials": {
+                "username": "db513aa1-600a-4ec5-a45f-af564a5b656d-bluemix",
+                "password": "ab2456d8146bd7daa6e7c95ec6e601a917a13ab32a0642b5276e6798c7bbab8b",
+                "host": "db513aa1-600a-4ec5-a45f-af564a5b656d-bluemix.cloudant.com",
+                "port": 443,
+                "url": "https://db513aa1-600a-4ec5-a45f-af564a5b656d-bluemix:ab2456d8146bd7daa6e7c95ec6e601a917a13ab32a0642b5276e6798c7bbab8b@db513aa1-600a-4ec5-a45f-af564a5b656d-bluemix.cloudant.com"
+            },
+            "syslog_drain_url": null,
+            "volume_mounts": [],
+            "label": "cloudantNoSQLDB",
+            "provider": null,
+            "plan": "Lite",
+            "name": "TFA Bot-cloudantNoSQLDB",
+            "tags": [
+                "data_management",
+                "ibm_created",
+                "lite",
+                "ibm_dedicated_public"
+            ]
+        }
+    ]
+}
