@@ -1,10 +1,17 @@
+---
+declared-services:
+  Conversation-4n:
+    label: conversation
+    plan: free
 applications:
 - path: .
   memory: 256M
   instances: 1
-  domain: mybluemix.net
   name: TFA Bot
   host: tfabot
-  disk_quota: 1024M
+  command: npm start
   services:
   - TFA Bot-cloudantNoSQLDB
+  - Conversation-4n
+  env:
+    NPM_CONFIG_PRODUCTION: false

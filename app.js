@@ -1,435 +1,96 @@
 /**
- * Module dependencies.
+ * Copyright 2015 IBM Corp. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
-var express = require('express'),
-    routes = require('./routes'),
-    user = require('./routes/user'),
-    http = require('http'),
-    path = require('path'),
-    fs = require('fs');
+'use strict';
+
+var express = require('express'); // app server
+var bodyParser = require('body-parser'); // parser for post requests
+var Conversation = require('watson-developer-cloud/conversation/v1'); // watson sdk
 
 var app = express();
 
-var db;
-
-var cloudant;
-
-var fileToUpload;
-
-var dbCredentials = {
-    dbName: 'my_sample_db'
-};
-
-var bodyParser = require('body-parser');
-var methodOverride = require('method-override');
-var logger = require('morgan');
-var errorHandler = require('errorhandler');
-var multipart = require('connect-multiparty')
-var multipartMiddleware = multipart();
-
-// all environments
-app.set('port', process.env.PORT || 3000);
-app.set('views', __dirname + '/views');
-app.set('view engine', 'ejs');
-app.engine('html', require('ejs').renderFile);
-app.use(logger('dev'));
-app.use(bodyParser.urlencoded({
-    extended: true
-}));
+// Bootstrap application settings
+app.use(express.static('./public')); // load UI from public folder
 app.use(bodyParser.json());
-app.use(methodOverride());
-app.use(express.static(path.join(__dirname, 'public')));
-app.use('/style', express.static(path.join(__dirname, '/views/style')));
 
-// development only
-if ('development' == app.get('env')) {
-    app.use(errorHandler());
-}
+// Create the service wrapper
+var conversation = new Conversation({
+  // If unspecified here, the CONVERSATION_USERNAME and CONVERSATION_PASSWORD env properties will be checked
+  // After that, the SDK will fall back to the bluemix-provided VCAP_SERVICES environment property
+  // username: '<username>',
+  // password: '<password>',
+  // url: 'https://gateway.watsonplatform.net/conversation/api',
+  version_date: Conversation.VERSION_DATE_2017_04_21
+});
 
-function getDBCredentialsUrl(jsonData) {
-    var vcapServices = JSON.parse(jsonData);
-    // Pattern match to find the first instance of a Cloudant service in
-    // VCAP_SERVICES. If you know your service key, you can access the
-    // service credentials directly by using the vcapServices object.
-    for (var vcapService in vcapServices) {
-        if (vcapService.match(/cloudant/i)) {
-            return vcapServices[vcapService][0].credentials.url;
-        }
+// Endpoint to be call from the client side
+app.post('/api/message', function(req, res) {
+  var workspace = process.env.WORKSPACE_ID || '<workspace-id>';
+  if (!workspace || workspace === '<workspace-id>') {
+    return res.json({
+      'output': {
+        'text': 'The app has not been configured with a <b>WORKSPACE_ID</b> environment variable. Please refer to the ' + '<a href="https://github.com/watson-developer-cloud/conversation-simple">README</a> documentation on how to set this variable. <br>' + 'Once a workspace has been defined the intents may be imported from ' + '<a href="https://github.com/watson-developer-cloud/conversation-simple/blob/master/training/car_workspace.json">here</a> in order to get a working application.'
+      }
+    });
+  }
+  var payload = {
+    workspace_id: workspace,
+    context: req.body.context || {},
+    input: req.body.input || {}
+  };
+
+  // Send the input to the conversation service
+  conversation.message(payload, function(err, data) {
+    if (err) {
+      return res.status(err.code || 500).json(err);
     }
-}
+    return res.json(updateMessage(payload, data));
+  });
+});
 
-function initDBConnection() {
-    //When running on Bluemix, this variable will be set to a json object
-    //containing all the service credentials of all the bound services
-    if (process.env.VCAP_SERVICES) {
-        dbCredentials.url = getDBCredentialsUrl(process.env.VCAP_SERVICES);
-    } else { //When running locally, the VCAP_SERVICES will not be set
-
-        // When running this app locally you can get your Cloudant credentials
-        // from Bluemix (VCAP_SERVICES in "cf env" output or the Environment
-        // Variables section for an app in the Bluemix console dashboard).
-        // Once you have the credentials, paste them into a file called vcap-local.json.
-        // Alternately you could point to a local database here instead of a
-        // Bluemix service.
-        // url will be in this format: https://username:password@xxxxxxxxx-bluemix.cloudant.com
-        dbCredentials.url = getDBCredentialsUrl(fs.readFileSync("vcap-local.json", "utf-8"));
+/**
+ * Updates the response text using the intent confidence
+ * @param  {Object} input The request to the Conversation service
+ * @param  {Object} response The response from the Conversation service
+ * @return {Object}          The response with the updated message
+ */
+function updateMessage(input, response) {
+  var responseText = null;
+  if (!response.output) {
+    response.output = {};
+  } else {
+    return response;
+  }
+  if (response.intents && response.intents[0]) {
+    var intent = response.intents[0];
+    // Depending on the confidence of the response the app can return different messages.
+    // The confidence will vary depending on how well the system is trained. The service will always try to assign
+    // a class/intent to the input. If the confidence is low, then it suggests the service is unsure of the
+    // user's intent . In these cases it is usually best to return a disambiguation message
+    // ('I did not understand your intent, please rephrase your question', etc..)
+    if (intent.confidence >= 0.75) {
+      responseText = 'I understood your intent was ' + intent.intent;
+    } else if (intent.confidence >= 0.5) {
+      responseText = 'I think your intent was ' + intent.intent;
+    } else {
+      responseText = 'I did not understand your intent';
     }
-
-    cloudant = require('cloudant')(dbCredentials.url);
-
-    // check if DB exists if not create
-    cloudant.db.create(dbCredentials.dbName, function(err, res) {
-        if (err) {
-            console.log('Could not create new db: ' + dbCredentials.dbName + ', it might already exist.');
-        }
-    });
-
-    db = cloudant.use(dbCredentials.dbName);
+  }
+  response.output.text = responseText;
+  return response;
 }
 
-initDBConnection();
-
-app.get('/', routes.index);
-
-function createResponseData(id, name, value, attachments) {
-
-    var responseData = {
-        id: id,
-        name: sanitizeInput(name),
-        value: sanitizeInput(value),
-        attachements: []
-    };
-
-
-    attachments.forEach(function(item, index) {
-        var attachmentData = {
-            content_type: item.type,
-            key: item.key,
-            url: '/api/favorites/attach?id=' + id + '&key=' + item.key
-        };
-        responseData.attachements.push(attachmentData);
-
-    });
-    return responseData;
-}
-
-function sanitizeInput(str) {
-    return String(str).replace(/&(?!amp;|lt;|gt;)/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-var saveDocument = function(id, name, value, response) {
-
-    if (id === undefined) {
-        // Generated random id
-        id = '';
-    }
-
-    db.insert({
-        name: name,
-        value: value
-    }, id, function(err, doc) {
-        if (err) {
-            console.log(err);
-            response.sendStatus(500);
-        } else
-            response.sendStatus(200);
-        response.end();
-    });
-
-}
-
-app.get('/api/favorites/attach', function(request, response) {
-    var doc = request.query.id;
-    var key = request.query.key;
-
-    db.attachment.get(doc, key, function(err, body) {
-        if (err) {
-            response.status(500);
-            response.setHeader('Content-Type', 'text/plain');
-            response.write('Error: ' + err);
-            response.end();
-            return;
-        }
-
-        response.status(200);
-        response.setHeader("Content-Disposition", 'inline; filename="' + key + '"');
-        response.write(body);
-        response.end();
-        return;
-    });
-});
-
-app.post('/api/favorites/attach', multipartMiddleware, function(request, response) {
-
-    console.log("Upload File Invoked..");
-    console.log('Request: ' + JSON.stringify(request.headers));
-
-    var id;
-
-    db.get(request.query.id, function(err, existingdoc) {
-
-        var isExistingDoc = false;
-        if (!existingdoc) {
-            id = '-1';
-        } else {
-            id = existingdoc.id;
-            isExistingDoc = true;
-        }
-
-        var name = sanitizeInput(request.query.name);
-        var value = sanitizeInput(request.query.value);
-
-        var file = request.files.file;
-        var newPath = './public/uploads/' + file.name;
-
-        var insertAttachment = function(file, id, rev, name, value, response) {
-
-            fs.readFile(file.path, function(err, data) {
-                if (!err) {
-
-                    if (file) {
-
-                        db.attachment.insert(id, file.name, data, file.type, {
-                            rev: rev
-                        }, function(err, document) {
-                            if (!err) {
-                                console.log('Attachment saved successfully.. ');
-
-                                db.get(document.id, function(err, doc) {
-                                    console.log('Attachements from server --> ' + JSON.stringify(doc._attachments));
-
-                                    var attachements = [];
-                                    var attachData;
-                                    for (var attachment in doc._attachments) {
-                                        if (attachment == value) {
-                                            attachData = {
-                                                "key": attachment,
-                                                "type": file.type
-                                            };
-                                        } else {
-                                            attachData = {
-                                                "key": attachment,
-                                                "type": doc._attachments[attachment]['content_type']
-                                            };
-                                        }
-                                        attachements.push(attachData);
-                                    }
-                                    var responseData = createResponseData(
-                                        id,
-                                        name,
-                                        value,
-                                        attachements);
-                                    console.log('Response after attachment: \n' + JSON.stringify(responseData));
-                                    response.write(JSON.stringify(responseData));
-                                    response.end();
-                                    return;
-                                });
-                            } else {
-                                console.log(err);
-                            }
-                        });
-                    }
-                }
-            });
-        }
-
-        if (!isExistingDoc) {
-            existingdoc = {
-                name: name,
-                value: value,
-                create_date: new Date()
-            };
-
-            // save doc
-            db.insert({
-                name: name,
-                value: value
-            }, '', function(err, doc) {
-                if (err) {
-                    console.log(err);
-                } else {
-
-                    existingdoc = doc;
-                    console.log("New doc created ..");
-                    console.log(existingdoc);
-                    insertAttachment(file, existingdoc.id, existingdoc.rev, name, value, response);
-
-                }
-            });
-
-        } else {
-            console.log('Adding attachment to existing doc.');
-            console.log(existingdoc);
-            insertAttachment(file, existingdoc._id, existingdoc._rev, name, value, response);
-        }
-
-    });
-
-});
-
-app.post('/api/favorites', function(request, response) {
-
-    console.log("Create Invoked..");
-    console.log("Name: " + request.body.name);
-    console.log("Value: " + request.body.value);
-
-    // var id = request.body.id;
-    var name = sanitizeInput(request.body.name);
-    var value = sanitizeInput(request.body.value);
-
-    saveDocument(null, name, value, response);
-
-});
-
-app.delete('/api/favorites', function(request, response) {
-
-    console.log("Delete Invoked..");
-    var id = request.query.id;
-    // var rev = request.query.rev; // Rev can be fetched from request. if
-    // needed, send the rev from client
-    console.log("Removing document of ID: " + id);
-    console.log('Request Query: ' + JSON.stringify(request.query));
-
-    db.get(id, {
-        revs_info: true
-    }, function(err, doc) {
-        if (!err) {
-            db.destroy(doc._id, doc._rev, function(err, res) {
-                // Handle response
-                if (err) {
-                    console.log(err);
-                    response.sendStatus(500);
-                } else {
-                    response.sendStatus(200);
-                }
-            });
-        }
-    });
-
-});
-
-app.put('/api/favorites', function(request, response) {
-
-    console.log("Update Invoked..");
-
-    var id = request.body.id;
-    var name = sanitizeInput(request.body.name);
-    var value = sanitizeInput(request.body.value);
-
-    console.log("ID: " + id);
-
-    db.get(id, {
-        revs_info: true
-    }, function(err, doc) {
-        if (!err) {
-            console.log(doc);
-            doc.name = name;
-            doc.value = value;
-            db.insert(doc, doc.id, function(err, doc) {
-                if (err) {
-                    console.log('Error inserting data\n' + err);
-                    return 500;
-                }
-                return 200;
-            });
-        }
-    });
-});
-
-app.get('/api/favorites', function(request, response) {
-
-    console.log("Get method invoked.. ")
-
-    db = cloudant.use(dbCredentials.dbName);
-    var docList = [];
-    var i = 0;
-    db.list(function(err, body) {
-        if (!err) {
-            var len = body.rows.length;
-            console.log('total # of docs -> ' + len);
-            if (len == 0) {
-                // push sample data
-                // save doc
-                var docName = 'sample_doc';
-                var docDesc = 'A sample Document';
-                db.insert({
-                    name: docName,
-                    value: 'A sample Document'
-                }, '', function(err, doc) {
-                    if (err) {
-                        console.log(err);
-                    } else {
-
-                        console.log('Document : ' + JSON.stringify(doc));
-                        var responseData = createResponseData(
-                            doc.id,
-                            docName,
-                            docDesc, []);
-                        docList.push(responseData);
-                        response.write(JSON.stringify(docList));
-                        console.log(JSON.stringify(docList));
-                        console.log('ending response...');
-                        response.end();
-                    }
-                });
-            } else {
-
-                body.rows.forEach(function(document) {
-
-                    db.get(document.id, {
-                        revs_info: true
-                    }, function(err, doc) {
-                        if (!err) {
-                            if (doc['_attachments']) {
-
-                                var attachments = [];
-                                for (var attribute in doc['_attachments']) {
-
-                                    if (doc['_attachments'][attribute] && doc['_attachments'][attribute]['content_type']) {
-                                        attachments.push({
-                                            "key": attribute,
-                                            "type": doc['_attachments'][attribute]['content_type']
-                                        });
-                                    }
-                                    console.log(attribute + ": " + JSON.stringify(doc['_attachments'][attribute]));
-                                }
-                                var responseData = createResponseData(
-                                    doc._id,
-                                    doc.name,
-                                    doc.value,
-                                    attachments);
-
-                            } else {
-                                var responseData = createResponseData(
-                                    doc._id,
-                                    doc.name,
-                                    doc.value, []);
-                            }
-
-                            docList.push(responseData);
-                            i++;
-                            if (i >= len) {
-                                response.write(JSON.stringify(docList));
-                                console.log('ending response...');
-                                response.end();
-                            }
-                        } else {
-                            console.log(err);
-                        }
-                    });
-
-                });
-            }
-
-        } else {
-            console.log(err);
-        }
-    });
-
-});
-
-
-http.createServer(app).listen(app.get('port'), '0.0.0.0', function() {
-    console.log('Express server listening on port ' + app.get('port'));
-});
+module.exports = app;
